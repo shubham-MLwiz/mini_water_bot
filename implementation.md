@@ -130,7 +130,7 @@ SLEEP_HOUR=23
 
 ### Phase 3: Water Intake Logging
 
-- [ ] **Step 8** — Create database.py with SQLite schema and helper functions
+- [x] **Step 8** — Create database.py with SQLite schema and helper functions
 - [ ] **Step 9** — Add natural text parser for intake messages ("drank 200 ml")
 - [ ] **Step 10** — Add /summary command and natural query support
 

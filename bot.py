@@ -1,7 +1,6 @@
 """
-Water Reminder Bot — Step 7
-Added chat ID restriction: only YOUR Telegram account can use this bot.
-Anyone else who messages it gets silently ignored.
+Water Reminder Bot — Step 8
+Added database layer: water intake is now stored persistently in SQLite.
 """
 
 import os
@@ -10,6 +9,8 @@ from functools import wraps
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters, MessageHandler
+
+from database import init_db
 
 # Load environment variables from .env file
 load_dotenv()
@@ -63,6 +64,10 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     """Create the bot application and start polling."""
+    # Initialize database — creates the table if this is the first run
+    init_db()
+    print("[OK] Database initialized (water.db)")
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Command handlers
