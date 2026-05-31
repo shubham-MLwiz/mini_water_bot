@@ -54,6 +54,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Silence the noisy HTTP request logs from httpx and telegram libraries.
+# Without these lines, every single poll request (every 3-5 sec) gets logged.
+# We only want to see WARNING or ERROR from these — not routine "200 OK" spam.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
 
 def authorized_only(func):
     """Decorator that blocks anyone who isn't you.
