@@ -1,9 +1,10 @@
 """
-Water Reminder Bot — Step 12
-Added "lagging behind" pace calculation: compares actual intake vs expected
-based on current hour of the day.
+Water Reminder Bot — Step 15 (Final)
+Added /help command, proper logging, and error handling.
+Bot is now feature-complete.
 """
 
+import logging
 import os
 import re
 from datetime import datetime, time as dt_time
@@ -24,6 +25,35 @@ DAILY_TARGET_ML = int(os.getenv("DAILY_TARGET_ML", "2500"))
 WAKE_HOUR = int(os.getenv("WAKE_HOUR", "7"))
 SLEEP_HOUR = int(os.getenv("SLEEP_HOUR", "23"))
 
+# ──────────────────────────────────────────────────────────────────────
+# LOGGING SETUP
+# ──────────────────────────────────────────────────────────────────────
+# Python's `logging` module is the standard way to record what your program
+# is doing. It's better than print() because:
+#   - Messages are timestamped automatically
+#   - You can set severity levels (DEBUG, INFO, WARNING, ERROR)
+#   - Output goes to both terminal AND a file simultaneously
+#   - Libraries (like python-telegram-bot) also use logging, so you see
+#     their messages too when debugging
+#
+# Levels (from least to most severe):
+#   DEBUG   → Detailed diagnostic info (usually off in production)
+#   INFO    → Confirmation that things are working as expected
+#   WARNING → Something unexpected but not broken
+#   ERROR   → Something failed
+# ──────────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),                    # Print to terminal
+        logging.FileHandler("bot.log", mode="a"),   # Append to bot.log file
+    ]
+)
+logger = logging.getLogger(__name__)
+
 
 def authorized_only(func):
     """Decorator that blocks anyone who isn't you.
@@ -36,9 +66,8 @@ def authorized_only(func):
     """
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != CHAT_ID:
-            # Log the unauthorized attempt (visible in your terminal)
-            print(f"[BLOCKED] Unauthorized user {update.effective_user.id} tried: {update.message.text}")
-            return  # Silently ignore — don't even reply
+            logger.warning(f"Unauthorized user {update.effective_user.id} tried: {update.message.text}")
+            return
         return await func(update, context)
     wrapper = wraps(func)(wrapper)
     return wrapper
@@ -47,7 +76,7 @@ def authorized_only(func):
 @authorized_only
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command. Sends a welcome message."""
-    print(f"[OK] /start from {update.effective_user.first_name}")
+    logger.info(f"/start from {update.effective_user.first_name}")
     await update.message.reply_text(
         "Hey! I'm your Water Reminder Bot 💧\n\n"
         "I'll remind you to drink water every hour and track your intake.\n\n"
@@ -57,9 +86,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @authorized_only
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /help command. Lists all available commands and input formats."""
+    logger.info("/help requested")
+    await update.message.reply_text(
+        "💧 Water Reminder Bot — Help\n"
+        "\n"
+        "Commands:\n"
+        "  /start   — Welcome message\n"
+        "  /summary — Today's intake breakdown\n"
+        "  /help    — This help text\n"
+        "\n"
+        "Log water (just type normally):\n"
+        "  \"drank 200 ml\"\n"
+        "  \"250ml\"\n"
+        "  \"200\"\n"
+        "  \"just had 300 ml\"\n"
+        "\n"
+        "Check status (natural language):\n"
+        "  \"how much today\"\n"
+        "  \"am I lagging behind\"\n"
+        "  \"total\" / \"status\" / \"progress\"\n"
+        "\n"
+        f"🎯 Daily target: {DAILY_TARGET_ML} ml\n"
+        f"⏰ Reminders: {WAKE_HOUR}:00 to {SLEEP_HOUR - 1}:00"
+    )
+
+
+@authorized_only
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /summary command. Shows today's intake breakdown."""
-    print(f"[OK] /summary requested")
+    logger.info("/summary requested")
     await update.message.reply_text(build_summary_text())
 
 
@@ -152,7 +209,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Check if this is a summary/status query (not an intake log)
     summary_keywords = ["how much", "total", "summary", "status", "progress", "lagging", "behind"]
     if any(keyword in text for keyword in summary_keywords):
-        print(f"[OK] Summary query: {text}")
+        logger.info(f"Summary query: {text}")
         await update.message.reply_text(build_summary_text())
         return
     
@@ -178,7 +235,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Log to database
         time_str, total = log_water(amount)
         
-        print(f"[OK] Logged {amount} ml at {time_str}. Today's total: {total} ml")
+        logger.info(f"Logged {amount} ml at {time_str}. Today's total: {total} ml")
         await update.message.reply_text(
             f"✅ Logged {amount} ml at {time_str}\n"
             f"📊 Today's total: {total} ml"
@@ -212,20 +269,34 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"🚩 Still need: {remaining} ml"
         )
 
-    print(f"[REMINDER] Sent: {total}/{DAILY_TARGET_ML} ml")
+    logger.info(f"[REMINDER] Sent: {total}/{DAILY_TARGET_ML} ml")
     await context.bot.send_message(chat_id=CHAT_ID, text=message)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle any uncaught exceptions in handlers.
+
+    Without this, errors get swallowed silently. This ensures:
+    - The error is logged to bot.log (so you can debug later)
+    - The bot doesn't crash — it keeps running for the next message
+    """
+    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
 
 
 def main() -> None:
     """Create the bot application and start polling."""
     # Initialize database — creates the table if this is the first run
     init_db()
-    print("[OK] Database initialized (water.db)")
+    logger.info("Database initialized (water.db)")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Register error handler
+    app.add_error_handler(error_handler)
+
     # Command handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("summary", summary))
 
     # Message handler — catches any text that isn't a command
@@ -271,9 +342,10 @@ def main() -> None:
         )
 
     print(f"[OK] Hourly reminders scheduled: {WAKE_HOUR}:00 to {SLEEP_HOUR - 1}:00")
-    print("Bot is running... Press Ctrl+C to stop.")
-    print(f"Authorized chat ID: {CHAT_ID}")
-    print(f"Daily target: {DAILY_TARGET_ML} ml")
+    logger.info("Bot started successfully")
+    logger.info(f"Authorized chat ID: {CHAT_ID}")
+    logger.info(f"Daily target: {DAILY_TARGET_ML} ml")
+    logger.info(f"Reminders: {WAKE_HOUR}:00 to {SLEEP_HOUR - 1}:00")
     # drop_pending_updates=True → ignore old messages from when bot was offline
     app.run_polling(drop_pending_updates=True)
 

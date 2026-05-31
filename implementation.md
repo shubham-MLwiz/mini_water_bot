@@ -141,9 +141,9 @@ SLEEP_HOUR=23
 
 ### Phase 5: Polish
 
-- [ ] **Step 13** — Add /help command
-- [ ] **Step 14** — Add error handling and file logging
-- [ ] **Step 15** — End-to-end test on local machine
+- [x] **Step 13** — Add /help command
+- [x] **Step 14** — Add error handling and file logging
+- [x] **Step 15** — End-to-end test on local machine
 
 ### Phase 6: Cloud Deployment (separate effort)
 
