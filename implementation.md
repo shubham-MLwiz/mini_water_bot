@@ -136,7 +136,7 @@ SLEEP_HOUR=23
 
 ### Phase 4: Hourly Reminders
 
-- [ ] **Step 11** — Set up JobQueue for hourly reminders during waking hours
+- [x] **Step 11** — Set up JobQueue for hourly reminders during waking hours
 - [ ] **Step 12** — Add "lagging behind" calculation (actual vs expected)
 
 ### Phase 5: Polish

@@ -1,10 +1,12 @@
 """
-Water Reminder Bot — Step 10
-Added /summary command and natural query support ("how much today", "total").
+Water Reminder Bot — Step 11
+Added hourly reminders via JobQueue. The bot proactively messages you every hour
+during waking hours with a nudge to drink water + today's progress.
 """
 
 import os
 import re
+from datetime import time as dt_time
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -19,6 +21,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 DAILY_TARGET_ML = int(os.getenv("DAILY_TARGET_ML", "2500"))
+WAKE_HOUR = int(os.getenv("WAKE_HOUR", "7"))
+SLEEP_HOUR = int(os.getenv("SLEEP_HOUR", "23"))
 
 
 def authorized_only(func):
@@ -147,6 +151,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def send_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Called automatically by JobQueue at each scheduled hour.
+
+    This is NOT triggered by a user message — it's triggered by the clock.
+    That's why it doesn't have an `update` parameter (no incoming message).
+    Instead it uses `context.bot.send_message()` to proactively message you.
+    """
+    total = get_today_total()
+    remaining = max(0, DAILY_TARGET_ML - total)
+
+    if remaining == 0:
+        message = "🎉 You've hit your water target for today! Keep it up."
+    else:
+        message = (
+            f"💧 Time to drink water!\n\n"
+            f"📊 Today so far: {total} ml / {DAILY_TARGET_ML} ml\n"
+            f"🚩 Still need: {remaining} ml"
+        )
+
+    print(f"[REMINDER] Sent: {total}/{DAILY_TARGET_ML} ml")
+    await context.bot.send_message(chat_id=CHAT_ID, text=message)
+
+
 def main() -> None:
     """Create the bot application and start polling."""
     # Initialize database — creates the table if this is the first run
@@ -163,10 +190,48 @@ def main() -> None:
     # Tries to parse water intake or respond to natural queries
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # ──────────────────────────────────────────────────────────────────────
+    # HOURLY REMINDER (JobQueue)
+    # ──────────────────────────────────────────────────────────────────────
+    # How this works:
+    #
+    # 1. `job_queue` is a scheduler built into python-telegram-bot.
+    #    It uses APScheduler under the hood.
+    #
+    # 2. `run_daily()` means: "run this function once per day at a specific time."
+    #    We call it multiple times — once for EACH hour we want a reminder.
+    #
+    # 3. For example, if WAKE_HOUR=7 and SLEEP_HOUR=23, we schedule reminders
+    #    at 07:00, 08:00, 09:00, ... 22:00 (16 reminders per day).
+    #
+    # 4. The `send_reminder` function runs at each scheduled time.
+    #    It sends you a Telegram message with today's progress.
+    #
+    # 5. These jobs survive as long as the bot process is running.
+    #    If you restart the bot, they're re-registered automatically.
+    #
+    # Why run_daily() instead of run_repeating(interval=3600)?
+    #   - run_repeating starts from NOW, so reminders come at random minutes
+    #     (e.g., if you start at 14:37, reminders at 15:37, 16:37...)
+    #   - run_daily at exact hours gives clean :00 reminders
+    #   - Also easier to restrict to waking hours
+    # ──────────────────────────────────────────────────────────────────────
+
+    job_queue = app.job_queue
+
+    for hour in range(WAKE_HOUR, SLEEP_HOUR):
+        # Schedule one reminder per hour, at HH:00:00
+        reminder_time = dt_time(hour=hour, minute=0, second=0)
+        job_queue.run_daily(
+            send_reminder,           # The function to call
+            time=reminder_time,      # When to call it (e.g., 07:00)
+            name=f"reminder_{hour}"  # A label (useful for debugging)
+        )
+
+    print(f"[OK] Hourly reminders scheduled: {WAKE_HOUR}:00 to {SLEEP_HOUR - 1}:00")
     print("Bot is running... Press Ctrl+C to stop.")
     print(f"Authorized chat ID: {CHAT_ID}")
     print(f"Daily target: {DAILY_TARGET_ML} ml")
-    print("Handlers registered: /start, /summary, text messages")
     # drop_pending_updates=True → ignore old messages from when bot was offline
     app.run_polling(drop_pending_updates=True)
 
