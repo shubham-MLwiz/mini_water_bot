@@ -1,12 +1,12 @@
 """
-Water Reminder Bot — Step 11
-Added hourly reminders via JobQueue. The bot proactively messages you every hour
-during waking hours with a nudge to drink water + today's progress.
+Water Reminder Bot — Step 12
+Added "lagging behind" pace calculation: compares actual intake vs expected
+based on current hour of the day.
 """
 
 import os
 import re
-from datetime import time as dt_time
+from datetime import datetime, time as dt_time
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -88,7 +88,49 @@ def build_summary_text() -> str:
     else:
         lines.append("✅ Target reached! Great job!")
 
+    # Add pace comparison
+    pace_text = get_pace_text(total)
+    if pace_text:
+        lines.append(f"\n{pace_text}")
+
     return "\n".join(lines)
+
+
+def get_pace_text(total: int) -> str:
+    """Compare actual intake vs expected pace for this time of day.
+
+    Logic:
+    - You have (SLEEP_HOUR - WAKE_HOUR) waking hours to drink DAILY_TARGET_ML.
+    - Expected by now = (hours elapsed since wake) / (total waking hours) * target.
+    - If actual < expected → you're behind. If actual >= expected → you're on track.
+
+    Example (target=2500, wake=7, sleep=23, current time=15:00):
+    - Waking hours = 16
+    - Hours elapsed since 7:00 = 8
+    - Expected by now = (8/16) * 2500 = 1250 ml
+    - If you've only had 600 ml → "You're 650 ml behind pace"
+    """
+    now = datetime.now()
+    current_hour = now.hour
+
+    # Outside waking hours? No pace info.
+    if current_hour < WAKE_HOUR or current_hour >= SLEEP_HOUR:
+        return ""
+
+    waking_hours = SLEEP_HOUR - WAKE_HOUR  # e.g. 16
+    hours_elapsed = current_hour - WAKE_HOUR  # e.g. 8 at 15:00
+
+    # Avoid division weirdness at the very start of the day
+    if hours_elapsed == 0:
+        return "🏁 Day just started — keep sipping!"
+
+    expected = int((hours_elapsed / waking_hours) * DAILY_TARGET_ML)
+    diff = total - expected
+
+    if diff >= 0:
+        return f"✅ On pace! You're {diff} ml ahead of schedule."
+    else:
+        return f"⚠️ You're {abs(diff)} ml behind pace. Time to catch up!"
 
 
 @authorized_only
