@@ -20,15 +20,72 @@ A personal Telegram bot that:
 
 ## Architecture
 
+### How polling works (step by step)
+
 ```
-You (Telegram app)
-    ↕ (HTTPS, encrypted)
-Telegram servers
-    ↕ (Polling — bot asks "any new messages?")
-bot.py (your machine)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         WHAT HAPPENS WHEN YOU SEND "/start"              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. You type "/start" in Telegram app (phone/desktop)                   │
+│                  │                                                       │
+│                  ▼                                                       │
+│  2. Telegram app sends it to Telegram's servers (cloud, not yours)      │
+│     The message sits in a queue on Telegram's servers, waiting.         │
+│                  │                                                       │
+│                  ▼                                                       │
+│  3. Meanwhile, your bot.py is running a loop:                           │
+│     Every few seconds it calls:                                         │
+│       GET https://api.telegram.org/bot<TOKEN>/getUpdates                │
+│     This is called "long polling" — it asks "any new messages?"         │
+│                  │                                                       │
+│                  ▼                                                       │
+│  4. Telegram's server replies: "Yes, here's one update"                 │
+│     The reply is JSON containing the message text, sender ID, etc.      │
+│                  │                                                       │
+│                  ▼                                                       │
+│  5. python-telegram-bot parses the JSON, sees it's a "/start" command,  │
+│     and calls your `start()` function                                   │
+│                  │                                                       │
+│                  ▼                                                       │
+│  6. Your `start()` function calls:                                      │
+│       POST https://api.telegram.org/bot<TOKEN>/sendMessage              │
+│     with the reply text                                                 │
+│                  │                                                       │
+│                  ▼                                                       │
+│  7. Telegram's server receives it, pushes it to your Telegram app       │
+│     You see the reply on your phone.                                    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key points
+
+- **Your machine is NOT a server.** It never listens for incoming connections.
+  It's a client that calls out to Telegram's API repeatedly (like refreshing email).
+- **No ports are opened** on your machine. No one can connect to you.
+- **All traffic is HTTPS** (encrypted). Telegram never sees your bot token in plain text on the wire.
+- **The "loop" is handled by `app.run_polling()`** — you don't write it yourself.
+  Under the hood, it calls `getUpdates` with a timeout (waits ~30 sec for new messages
+  before asking again). This is efficient — not a busy spin.
+- **If your machine is off**, messages queue up on Telegram's servers.
+  When you restart the bot, it picks up where it left off.
+
+### Component diagram
+
+```
+bot.py (your machine — a CLIENT, not a server)
     ├── Handlers: /start, /summary, /help, natural text parsing
     ├── JobQueue: hourly reminders (7 AM – 11 PM)
-    └── database.py → water.db (SQLite file)
+    ├── database.py → water.db (SQLite file)
+    │
+    │   Every few seconds, calls OUT to:
+    ▼
+Telegram API servers (api.telegram.org)
+    │
+    │   Pushes messages to:
+    ▼
+Your Telegram app (phone/desktop)
 ```
 
 ## File Structure
@@ -68,8 +125,8 @@ SLEEP_HOUR=23
 
 ### Phase 2: Minimal Working Bot
 
-- [ ] **Step 6** — Write bot.py with /start handler (proves token works)
-- [ ] **Step 7** — Add chat ID restriction (only YOU can use the bot)
+- [x] **Step 6** — Write bot.py with /start handler (proves token works) ✓ Tested on personal laptop
+- [x] **Step 7** — Add chat ID restriction (only YOU can use the bot)
 
 ### Phase 3: Water Intake Logging
 
