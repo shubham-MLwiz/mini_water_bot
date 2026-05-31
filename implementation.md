@@ -94,7 +94,9 @@ Your Telegram app (phone/desktop)
 Telegram_bot/
 ├── bot.py              ← Main bot logic (handlers, scheduler, entry point)
 ├── database.py         ← SQLite helper functions (log, query, summarize)
+├── test_bot.py         ← Test suite (run with: python test_bot.py)
 ├── .env                ← BOT_TOKEN and CHAT_ID (never committed to git)
+├── .env.example        ← Template showing .env format (safe to commit)
 ├── .gitignore          ← Excludes .env, venv/, *.db, __pycache__/, *.log
 ├── requirements.txt    ← Pinned dependencies
 ├── implementation.md   ← This file
