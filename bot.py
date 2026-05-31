@@ -5,6 +5,7 @@ Anyone else who messages it gets silently ignored.
 """
 
 import os
+from functools import wraps
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -32,6 +33,7 @@ def authorized_only(func):
             print(f"[BLOCKED] Unauthorized user {update.effective_user.id} tried: {update.message.text}")
             return  # Silently ignore — don't even reply
         return await func(update, context)
+    wrapper = wraps(func)(wrapper)
     return wrapper
 
 
@@ -73,7 +75,9 @@ def main() -> None:
 
     print("Bot is running... Press Ctrl+C to stop.")
     print(f"Authorized chat ID: {CHAT_ID}")
-    app.run_polling()
+    print("Handlers registered: /start, text messages")
+    # drop_pending_updates=True → ignore old messages from when bot was offline
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
