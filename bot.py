@@ -1,16 +1,18 @@
 """
-Water Reminder Bot — Step 8
-Added database layer: water intake is now stored persistently in SQLite.
+Water Reminder Bot — Step 9
+Replaced echo handler with natural text parser for water intake logging.
+Messages like "drank 200 ml", "250ml", "just had 300 ml" now get logged.
 """
 
 import os
+import re
 from functools import wraps
 
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters, MessageHandler
 
-from database import init_db
+from database import init_db, log_water, get_today_total
 
 # Load environment variables from .env file
 load_dotenv()
@@ -51,15 +53,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @authorized_only
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Temporary handler: echoes back any text message.
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle all non-command text messages.
 
-    This will be replaced by the water intake parser in Step 9.
-    For now it proves that the bot receives and processes your messages.
+    Tries to parse a water intake amount from natural text.
+    Supported patterns:
+      - "drank 200 ml"
+      - "200ml"
+      - "200 ml"
+      - "just had 300 ml"
+      - "drank 500ml just now"
+    
+    If no number is found, replies with a hint.
     """
-    text = update.message.text
-    print(f"[OK] Message received: {text}")
-    await update.message.reply_text(f"Got it: \"{text}\"\n(Intake parsing coming in Step 9)")
+    text = update.message.text.strip().lower()
+    
+    # Try to find a number followed by optional "ml" (or just a bare number)
+    # This regex looks for: any digits, optionally followed by whitespace + "ml"
+    # Examples that match: "200", "200ml", "200 ml"
+    match = re.search(r'(\d+)\s*ml\b', text)
+    
+    if not match:
+        # Maybe they just typed a bare number like "200"
+        match = re.search(r'\b(\d+)\b', text)
+    
+    if match:
+        amount = int(match.group(1))
+        
+        # Sanity check: reject unreasonable values
+        if amount <= 0 or amount > 5000:
+            await update.message.reply_text(
+                f"🤔 {amount} ml doesn't seem right. Please enter between 1 and 5000 ml."
+            )
+            return
+        
+        # Log to database
+        time_str, total = log_water(amount)
+        
+        print(f"[OK] Logged {amount} ml at {time_str}. Today's total: {total} ml")
+        await update.message.reply_text(
+            f"✅ Logged {amount} ml at {time_str}\n"
+            f"📊 Today's total: {total} ml"
+        )
+    else:
+        # No number found in the message
+        await update.message.reply_text(
+            "I didn't catch an amount. Try:\n"
+            "• \"drank 200 ml\"\n"
+            "• \"250ml\"\n"
+            "• or just \"200\""
+        )
 
 
 def main() -> None:
@@ -74,9 +117,8 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
 
     # Message handler — catches any text that isn't a command
-    # filters.TEXT = only text messages (not photos, stickers, etc.)
-    # ~filters.COMMAND = exclude messages starting with / (those go to CommandHandler)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+    # Tries to parse water intake from natural text
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot is running... Press Ctrl+C to stop.")
     print(f"Authorized chat ID: {CHAT_ID}")
