@@ -1,7 +1,6 @@
 """
-Water Reminder Bot — Step 9
-Replaced echo handler with natural text parser for water intake logging.
-Messages like "drank 200 ml", "250ml", "just had 300 ml" now get logged.
+Water Reminder Bot — Step 10
+Added /summary command and natural query support ("how much today", "total").
 """
 
 import os
@@ -12,13 +11,14 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters, MessageHandler
 
-from database import init_db, log_water, get_today_total
+from database import init_db, log_water, get_today_total, get_today_logs
 
 # Load environment variables from .env file
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = int(os.getenv("CHAT_ID"))  # Convert to int for comparison
+CHAT_ID = int(os.getenv("CHAT_ID"))
+DAILY_TARGET_ML = int(os.getenv("DAILY_TARGET_ML", "2500"))
 
 
 def authorized_only(func):
@@ -53,6 +53,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @authorized_only
+async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /summary command. Shows today's intake breakdown."""
+    print(f"[OK] /summary requested")
+    await update.message.reply_text(build_summary_text())
+
+
+def build_summary_text() -> str:
+    """Build the summary message text. Used by /summary and natural queries."""
+    logs = get_today_logs()
+    total = get_today_total()
+    remaining = max(0, DAILY_TARGET_ML - total)
+
+    if not logs:
+        return (
+            "📊 Today's Summary\n"
+            "\nNo water logged yet today.\n"
+            f"\n🎯 Target: {DAILY_TARGET_ML} ml"
+        )
+
+    # Build the log list
+    lines = ["📊 Today's Summary\n"]
+    for time_str, amount in logs:
+        lines.append(f"  {time_str} — {amount} ml")
+
+    lines.append(f"\n📊 Total: {total} ml / {DAILY_TARGET_ML} ml")
+
+    if remaining > 0:
+        lines.append(f"🚩 Remaining: {remaining} ml")
+    else:
+        lines.append("✅ Target reached! Great job!")
+
+    return "\n".join(lines)
+
+
+@authorized_only
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle all non-command text messages.
 
@@ -67,6 +102,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     If no number is found, replies with a hint.
     """
     text = update.message.text.strip().lower()
+    
+    # Check if this is a summary/status query (not an intake log)
+    summary_keywords = ["how much", "total", "summary", "status", "progress", "lagging", "behind"]
+    if any(keyword in text for keyword in summary_keywords):
+        print(f"[OK] Summary query: {text}")
+        await update.message.reply_text(build_summary_text())
+        return
     
     # Try to find a number followed by optional "ml" (or just a bare number)
     # This regex looks for: any digits, optionally followed by whitespace + "ml"
@@ -115,14 +157,16 @@ def main() -> None:
 
     # Command handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("summary", summary))
 
     # Message handler — catches any text that isn't a command
-    # Tries to parse water intake from natural text
+    # Tries to parse water intake or respond to natural queries
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot is running... Press Ctrl+C to stop.")
     print(f"Authorized chat ID: {CHAT_ID}")
-    print("Handlers registered: /start, text messages")
+    print(f"Daily target: {DAILY_TARGET_ML} ml")
+    print("Handlers registered: /start, /summary, text messages")
     # drop_pending_updates=True → ignore old messages from when bot was offline
     app.run_polling(drop_pending_updates=True)
 

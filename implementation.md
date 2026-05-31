@@ -132,7 +132,7 @@ SLEEP_HOUR=23
 
 - [x] **Step 8** — Create database.py with SQLite schema and helper functions
 - [x] **Step 9** — Add natural text parser for intake messages ("drank 200 ml")
-- [ ] **Step 10** — Add /summary command and natural query support
+- [x] **Step 10** — Add /summary command and natural query support
 
 ### Phase 4: Hourly Reminders
 
