@@ -129,6 +129,60 @@ def test_summary_keywords():
     print("  ALL KEYWORD TESTS PASSED ✓\n")
 
 
+def test_custom_reminders():
+    """Test custom reminder parsing."""
+    from bot import parse_custom_reminder
+    print("Testing custom reminder parsing...")
+
+    # Should parse as relative reminders (returns tuple)
+    relative_cases = [
+        ("remind me in 10 mins", 600),
+        ("remind me in 1 hour", 3600),
+        ("remind in 30 minutes", 1800),
+        ("remind me again in 20 min", 1200),
+        ("snooze 15 mins", 900),
+        ("snooze for 10 minutes", 600),
+        ("remind me in 2 hrs", 7200),
+    ]
+
+    for text, expected_seconds in relative_cases:
+        result = parse_custom_reminder(text)
+        assert result is not None, f"FAILED: '{text}' should parse as reminder"
+        delay, desc = result
+        assert delay == expected_seconds, f"FAILED: '{text}' → {delay}s, expected {expected_seconds}s"
+        print(f"  ✓ \"{text}\" → {delay}s ({desc})")
+
+    # Should parse as absolute reminders (returns tuple with positive seconds)
+    absolute_cases = [
+        "remind me at 3:15 pm",
+        "remind me at 14:30",
+        "remind me at 9 am",
+    ]
+
+    for text in absolute_cases:
+        result = parse_custom_reminder(text)
+        assert result is not None, f"FAILED: '{text}' should parse as reminder"
+        delay, desc = result
+        assert delay > 0, f"FAILED: '{text}' → delay should be positive, got {delay}"
+        print(f"  ✓ \"{text}\" → {delay}s ({desc})")
+
+    # Should NOT parse as reminders
+    not_reminders = [
+        "drank 200 ml",
+        "250ml",
+        "how much today",
+        "hello",
+        "10 minutes ago",
+    ]
+
+    for text in not_reminders:
+        result = parse_custom_reminder(text)
+        assert result is None, f"FAILED: '{text}' should NOT parse as reminder"
+        print(f"  ✓ \"{text}\" → not a reminder")
+
+    print("  ALL REMINDER PARSING TESTS PASSED ✓\n")
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("  WATER REMINDER BOT — TEST SUITE")
@@ -137,6 +191,7 @@ if __name__ == "__main__":
     test_database()
     test_parsing()
     test_summary_keywords()
+    test_custom_reminders()
     
     # Clean up test DB
     if os.path.exists("test_water.db"):

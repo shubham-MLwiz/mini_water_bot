@@ -7,7 +7,7 @@ Bot is now feature-complete.
 import logging
 import os
 import re
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
 
@@ -63,10 +63,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 
-# Keep APScheduler at INFO so we can see when jobs fire (or fail).
-# This will log lines like "Running job reminder_7" and "Job reminder_7 executed"
-# Once reminders are confirmed working, you can set this to WARNING too.
-logging.getLogger("apscheduler").setLevel(logging.DEBUG)
+# Reminders are confirmed working. Keep APScheduler at WARNING to reduce noise.
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 
 def authorized_only(func):
@@ -217,6 +215,93 @@ def get_pace_text(total: int) -> str:
         return f"⚠️ You're {abs(diff)} ml behind pace. Time to catch up!"
 
 
+# --------------- Custom On-Demand Reminders (Phase 6) --------------- #
+
+def parse_custom_reminder(text: str):
+    """Parse custom reminder requests from natural text.
+
+    Returns (delay_seconds, description) if the text is a reminder request,
+    or None if it isn't.
+
+    Supported patterns:
+      - "remind me in 10 mins"
+      - "remind me in 1 hour"
+      - "remind in 30 minutes"
+      - "remind me in 1.5 hours"
+      - "remind again in 20 min"
+      - "snooze 15 mins"
+      - "snooze for 10 minutes"
+      - "remind me at 3:15 pm"
+      - "remind at 14:30"
+      - "remind me at 3 pm"
+    """
+    # --- Pattern 1: relative time ("in X mins/hours") ---
+    # Matches: remind (me) (again) in X min/mins/minute/minutes/hour/hours/hr/hrs
+    # Also: snooze (for) X min/mins/...
+    relative_pattern = (
+        r'(?:remind(?:\s+me)?(?:\s+again)?|snooze)'
+        r'(?:\s+(?:in|for|after))?\s+'
+        r'(\d+(?:\.\d+)?)\s*'
+        r'(min(?:ute)?s?|hrs?|hours?)\b'
+    )
+    match = re.search(relative_pattern, text)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2)
+        if unit.startswith('h'):
+            delay_seconds = int(amount * 3600)
+            desc = f"in {amount:g} hour{'s' if amount != 1 else ''}"
+        else:
+            delay_seconds = int(amount * 60)
+            desc = f"in {int(amount)} min{'s' if amount != 1 else ''}"
+        return (delay_seconds, desc)
+
+    # --- Pattern 2: absolute time ("at HH:MM am/pm" or "at HH:MM" 24h) ---
+    absolute_pattern = (
+        r'(?:remind(?:\s+me)?(?:\s+again)?)'
+        r'\s+at\s+'
+        r'(\d{1,2})(?::(\d{2}))?\s*'
+        r'(am|pm)?'
+    )
+    match = re.search(absolute_pattern, text)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2)) if match.group(2) else 0
+        ampm = match.group(3)
+
+        if ampm:
+            if ampm == 'pm' and hour != 12:
+                hour += 12
+            elif ampm == 'am' and hour == 12:
+                hour = 0
+
+        now = datetime.now(tz=TZ)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        # If the target time already passed today, schedule for tomorrow
+        if target <= now:
+            target += timedelta(days=1)
+
+        delay_seconds = int((target - now).total_seconds())
+        time_str = target.strftime("%-I:%M %p")
+        return (delay_seconds, f"at {time_str}")
+
+    return None
+
+
+async def send_custom_reminder(context) -> None:
+    """Callback for one-time custom reminders."""
+    try:
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text="⏰ *Reminder!* Time to drink some water! 💧",
+            parse_mode="Markdown"
+        )
+        logger.info("Custom reminder sent successfully")
+    except Exception as e:
+        logger.error(f"Failed to send custom reminder: {e}")
+
+
 @authorized_only
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle all non-command text messages.
@@ -238,6 +323,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if any(keyword in text for keyword in summary_keywords):
         logger.info(f"Summary query: {text}")
         await update.message.reply_text(build_summary_text())
+        return
+    
+    # Check if this is a custom reminder request
+    reminder_result = parse_custom_reminder(text)
+    if reminder_result is not None:
+        delay_seconds, description = reminder_result
+        # Schedule a one-time reminder
+        context.job_queue.run_once(
+            send_custom_reminder,
+            when=delay_seconds,
+            name=f"custom_{int(datetime.now().timestamp())}"
+        )
+        logger.info(f"Custom reminder scheduled: {description} ({delay_seconds}s from now)")
+        await update.message.reply_text(f"⏰ Got it! I'll remind you {description}.")
         return
     
     # Try to find a number followed by optional "ml" (or just a bare number)

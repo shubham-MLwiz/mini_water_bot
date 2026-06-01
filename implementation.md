@@ -148,9 +148,23 @@ TIMEZONE=Asia/Kolkata
 - [x] **Step 14** — Add error handling and file logging
 - [x] **Step 15** — End-to-end test on local machine
 
-### Phase 6: Cloud Deployment (separate effort)
+### Phase 6: Custom On-Demand Reminders
 
-- [ ] **Step 16** — Deploy to GCP e2-micro or AWS free tier
+- [x] **Step 16** — Parse "remind me in X mins/hours" messages
+- [x] **Step 17** — Parse "remind me at HH:MM" messages
+- [x] **Step 18** — Schedule one-time reminders via job_queue.run_once()
+- [x] **Step 19** — Confirm scheduling + handle edge cases (next-day rollover if time already passed, positive delay assertion)
+
+### Phase 7: Cloud Deployment (separate effort)
+
+- [ ] **Step 20** — Deploy to GCP e2-micro or AWS free tier
+
+### Phase 8: Multi-User Group Support (future/optional)
+
+- [ ] Redesign database schema with user_id column
+- [ ] Per-user configuration (target, wake/sleep hours)
+- [ ] Group bot permissions and privacy mode handling
+- [ ] Isolated data per user
 
 ---
 
