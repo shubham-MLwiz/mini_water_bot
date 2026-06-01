@@ -111,6 +111,7 @@ CHAT_ID=your-numeric-chat-id
 DAILY_TARGET_ML=2500
 WAKE_HOUR=7
 SLEEP_HOUR=23
+TIMEZONE=Asia/Kolkata
 ```
 
 ---

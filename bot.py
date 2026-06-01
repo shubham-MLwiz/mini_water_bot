@@ -9,6 +9,7 @@ import os
 import re
 from datetime import datetime, time as dt_time
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -24,6 +25,8 @@ CHAT_ID = int(os.getenv("CHAT_ID"))
 DAILY_TARGET_ML = int(os.getenv("DAILY_TARGET_ML", "2500"))
 WAKE_HOUR = int(os.getenv("WAKE_HOUR", "7"))
 SLEEP_HOUR = int(os.getenv("SLEEP_HOUR", "23"))
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
+TZ = ZoneInfo(TIMEZONE)  # Timezone object used by scheduler and pace calculation
 
 # ──────────────────────────────────────────────────────────────────────
 # LOGGING SETUP
@@ -59,6 +62,11 @@ logger = logging.getLogger(__name__)
 # We only want to see WARNING or ERROR from these — not routine "200 OK" spam.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
+
+# Keep APScheduler at INFO so we can see when jobs fire (or fail).
+# This will log lines like "Running job reminder_7" and "Job reminder_7 executed"
+# Once reminders are confirmed working, you can set this to WARNING too.
+logging.getLogger("apscheduler").setLevel(logging.DEBUG)
 
 
 def authorized_only(func):
@@ -120,6 +128,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 @authorized_only
+async def test_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /testreminder — manually triggers one reminder NOW for debugging.
+    
+    This calls the exact same send_reminder function that the scheduler calls.
+    If this works but scheduled ones don't, the issue is with scheduling.
+    If this also fails, the issue is inside send_reminder itself.
+    """
+    logger.info("/testreminder triggered manually")
+    await send_reminder(context)
+    await update.message.reply_text("(Test reminder sent — check if you got it above)")
+
+
+@authorized_only
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /summary command. Shows today's intake breakdown."""
     logger.info("/summary requested")
@@ -173,7 +194,7 @@ def get_pace_text(total: int) -> str:
     - Expected by now = (8/16) * 2500 = 1250 ml
     - If you've only had 600 ml → "You're 650 ml behind pace"
     """
-    now = datetime.now()
+    now = datetime.now(tz=TZ)  # Use configured timezone, not system local time
     current_hour = now.hour
 
     # Outside waking hours? No pace info.
@@ -262,21 +283,29 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
     This is NOT triggered by a user message — it's triggered by the clock.
     That's why it doesn't have an `update` parameter (no incoming message).
     Instead it uses `context.bot.send_message()` to proactively message you.
+
+    Wrapped in try/except because APScheduler swallows job errors silently —
+    they don't go through app.add_error_handler(). Without this try/except,
+    a crash here would be completely invisible in logs.
     """
-    total = get_today_total()
-    remaining = max(0, DAILY_TARGET_ML - total)
+    try:
+        logger.info("[REMINDER] send_reminder triggered")
+        total = get_today_total()
+        remaining = max(0, DAILY_TARGET_ML - total)
 
-    if remaining == 0:
-        message = "🎉 You've hit your water target for today! Keep it up."
-    else:
-        message = (
-            f"💧 Time to drink water!\n\n"
-            f"📊 Today so far: {total} ml / {DAILY_TARGET_ML} ml\n"
-            f"🚩 Still need: {remaining} ml"
-        )
+        if remaining == 0:
+            message = "🎉 You've hit your water target for today! Keep it up."
+        else:
+            message = (
+                f"💧 Time to drink water!\n\n"
+                f"📊 Today so far: {total} ml / {DAILY_TARGET_ML} ml\n"
+                f"🚩 Still need: {remaining} ml"
+            )
 
-    logger.info(f"[REMINDER] Sent: {total}/{DAILY_TARGET_ML} ml")
-    await context.bot.send_message(chat_id=CHAT_ID, text=message)
+        await context.bot.send_message(chat_id=CHAT_ID, text=message)
+        logger.info(f"[REMINDER] Sent successfully: {total}/{DAILY_TARGET_ML} ml")
+    except Exception as e:
+        logger.error(f"[REMINDER] FAILED to send: {e}", exc_info=True)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -304,6 +333,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("summary", summary))
+    app.add_handler(CommandHandler("testreminder", test_reminder))
 
     # Message handler — catches any text that isn't a command
     # Tries to parse water intake or respond to natural queries
@@ -339,8 +369,10 @@ def main() -> None:
     job_queue = app.job_queue
 
     for hour in range(WAKE_HOUR, SLEEP_HOUR):
-        # Schedule one reminder per hour, at HH:00:00
-        reminder_time = dt_time(hour=hour, minute=0, second=0)
+        # Schedule one reminder per hour, at HH:00:00 in YOUR timezone
+        # tzinfo=TZ is critical — without it, APScheduler assumes UTC
+        # and your 7:00 AM reminder would fire at 12:30 PM IST instead
+        reminder_time = dt_time(hour=hour, minute=0, second=0, tzinfo=TZ)
         job_queue.run_daily(
             send_reminder,           # The function to call
             time=reminder_time,      # When to call it (e.g., 07:00)
